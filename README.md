@@ -8,7 +8,8 @@ The Harvard School of Mouse (HSOM) Behavioral Control Suite consists of an Ardui
 
 >Authors:
   >
-  >Spencer Lake Jacobs-Skolik (@lakesjs) and Allison E. Hamilos (@harvardschoolofmouse)
+  >Spencer Lake Jacobs-Skolik (@lakesjs)
+  >Allison E. Hamilos (@harvardschoolofmouse)
   >
 
 Last updated by Allison Hamilos on August 22, 2023. Please contact ahamilos{at}wi.mit.edu if you have questions or encounter issues.
