@@ -1,5 +1,5 @@
 /*********************************************************************
-	Arduino state machine code for ################Yourtasknamehere################# (mice)
+	Arduino state machine code for Hallucination_Task (mice)
 	
 	Training Paradigm and Architecture    - Allison Hamilos (ahamilos@g.harvard.edu)
 	Optogenetics Control System 		  - Allison Hamilos (ahamilos@g.harvard.edu)
@@ -13,6 +13,7 @@
 	
 	
 /*	New to THIS version:
+	- Initial version updated by LJS, August 2023
 	
 	------------------------------------------------------------------
 	COMPATIBILITY REPORT:
@@ -46,20 +47,23 @@
     -  1st Lick             (event marker = 16)   - first relevant lick in trial
 
 	Trial Type Markers:
-		-  Pavlovian            (event marker = 13)   - marks current trial as Pavlovian
-		-  Operant              (event marker = 14)   - marks current trial as Operant
-		-  Hybrid               (event marker = 15)   - marks current trial as Hybrid
+		-  
 	--------------------------------------------------------------------
 	States:
 		0: _INIT                (private) 1st state in init loop, sets up communication to Matlab HOST
 		1: IDLE_STATE           Awaiting command from Matlab HOST to begin experiment
-		2: TRIAL_INIT           House lamp OFF, random delay before cue presentation
-		3: PRE_WINDOW           (+/-) Enforced no lick before response window opens
-		4: RESPONSE_WINDOW      First lick in this interval rewarded (operant). Reward delivered at target time (pavlov)
-		5: POST_WINDOW          Checking for late licks
-		6: REWARD               Dispense reward, wait for trial Timeout
-		7: ABORT_TRIAL          Behavioral Error - House lamps ON, await trial Timeout
+  		2: INIT_TRIAL		Determine time of S (if it occurs)
+		2: CUE_TRIAL           	Play white noise (WN) and S
+		3: NOISE_TRIAL          (+/-) Enforced no lick before response window opens
+		4: RESPONSE_WINDOW      Window over which animal can choose L or R
+		5: HIT              	Reward state for correctly identifying S
+		6: CORRECT_REJECT	Reward state for correctly saying No S present
+		7: MISS,		Unrewarded state for missing stimulus S
+		8: FALSE_ALARM		Unrewarded state for picking side of S2, but there was no S2
+    		9: NO_RESPONSE		
 		8: INTERTRIAL           House lamps ON (if not already), write data to HOST and DISK
+  
+
 	---------------------------------------------------------------------
 	Result Codes:
 		0: CODE_CORRECT         First lick within response window               
@@ -68,34 +72,7 @@
 		3: CODE_NO_LICK         No Response -> Time Out
 	---------------------------------------------------------------------
 	Parameters:
-		0:  _DEBUG              (private) 1 to enable debug messages to HOST
-		1:  HYBRID              1 to overrule pav/op - is op if before target, pav if target reached
-		2:  PAVLOVIAN           1 to enable Pavlovian Mode
-		3:  OPERANT             1 to enable Operant Mode
-		4:  ENFORCE_NO_LICK     1 to enforce no lick in the pre-window interval
-		5:  INTERVAL_MIN        Time to start of reward window (ms)
-		6:  INTERVAL_MAX        Time to end of reward window (ms)
-		7:  TARGET              Target time (ms)
-		8:  TRIAL_DURATION      Total alloted time/trial (ms)
-		9:  ITI                 Intertrial interval duration (ms)
-		10: RANDOM_DELAY_MIN    Minimum random pre-Cue delay (ms)
-		11: RANDOM_DELAY_MAX    Maximum random pre-Cue delay (ms)
-		12: CUE_DURATION        Duration of the cue tone and LED flash (ms)
-		13: REWARD_DURATION     Duration of reward dispensal (ms)
-		14: QUININE_DURATION    Duration of quinine dispensal (ms)
-		15: QUININE_TIMEOUT     Minimum time between quinine deterrants (ms)
-		16: QUININE_MIN         Minimum time after cue before quinine available (ms)
-		17: QUININE_MAX         Maximum time after cue before quinine turns off (ms)
-		18: SHOCK_ON            1 to connect tube shock circuit
-		19: SHOCK_MIN           Miminum time after cue before shock connected (ms)
-		20: SHOCK_MAX           Maxumum time after cue before shock disconnected (ms)
-		21: EARLY_LICK_ABORT    1 to abort trial with early lick
-		22: ABORT_MIN           Minimum time after cue before early lick aborts trial (ms)
-		23: ABORT_MAX           Maximum time after cue when abort available (ms)
-		24: PERCENT_PAVLOVIAN   Percent of mixed trials that should be pavlovian (decimal)
-		25: P_STIM_UNCONDITIONAL % of trials (0-1) to stimulate with ChR2
-		26: CHR2_STIM_TIME      0 ms for at cue, -time for lights-off, in ms wrt cue
-
+		
 	---------------------------------------------------------------------
 		Incoming Message Syntax: (received from Matlab HOST)
 			"(character)#"        -- a command
@@ -172,9 +149,9 @@ enum State
     RESPONSE_WINDOW,	  // Window over which animal can choose L or R
     HIT,               	  // Reward state for correctly identifying S2
     CORRECT_REJECT,       // Reward state for correctly saying No S2 present
-    MISS,				  // Unrewarded state for missing stimulus S2
-    FALSE_ALARM,	 	  // Unrewarded state for picking side of S2, but there was no S2
-    NO_RESPONSE,	 	  // WHAT HAPPEN HERE?
+    MISS,		// Unrewarded state for missing stimulus S2
+    FALSE_ALARM,	// Unrewarded state for picking side of S2, but there was no S2
+    NO_RESPONSE,	// WHAT HAPPENS HERE?
     INTERTRIAL,           // WHAT HAPPENS HERE?
     _NUM_STATES           // (Private) Used to count number of states
 };
