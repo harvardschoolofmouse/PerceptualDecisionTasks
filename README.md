@@ -13,6 +13,8 @@ The Harvard School of Mouse (HSOM) Behavioral Control Suite consists of an Ardui
   >Allison E. Hamilos (@harvardschoolofmouse)
   >
 
+Arduino sketch containing Arduino State System Program within the HSOM_Arduino folder.
+
 Last updated by Allison Hamilos on August 22, 2023. Please contact ahamilos{at}wi.mit.edu if you have questions or encounter issues.
 
 ## Equipment Needed
