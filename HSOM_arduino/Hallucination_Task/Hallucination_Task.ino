@@ -1,19 +1,21 @@
 /*********************************************************************
 	Arduino state machine code for Hallucination_Task (mice)
 	
-	Training Paradigm and Architecture    - Allison Hamilos (ahamilos@g.harvard.edu)
-	Optogenetics Control System 		  - Allison Hamilos (ahamilos@g.harvard.edu)
-	Matlab Serial Communication Interface - Ofer Mazor
-	State System Architecture             - Lingfeng Hou (lingfenghou@g.harvard.edu)
+	Training Paradigm and Architecture    	- Allison Hamilos (ahamilos@wi.mit.edu)
+	Optogenetics Control System 		- Allison Hamilos (ahamilos@wi.mit..edu)
+	Matlab Serial Communication Interface 	- Ofer Mazor
+	State System Architecture             	- Lingfeng Hou (lingfenghou@g.harvard.edu)
+ 	With contributions from			- Spencer Lake Jacobs-Skolik (Spencer_Jacobs-Skolik@hms.harvard.edu)
 
 	Created       12/08/22 - ahamilos
-	Last Modified 01/11/22 - ljacobs-skolik	"JAN 11 2023 17h"
+	Last Modified 08/22/23 - ahamilos	"AUG 22 2023 17h"
 
-	static String versionCode        = "JAN 11 2023 17h";
+	static String versionCode  		= "AUG 22 2023 17h";
 	
 	
-/*	New to THIS version:
-	- Initial version updated by LJS, August 2023
+/*	Version history:
+	- 8/22/23: Documentation of code provided, debugging by AH; 08/22/23 - ahamilos	"AUG 22 2023 17h"
+	- 1/11/23: Filled in task events and optimization by LJS, 1/11/13 2023; 01/11/23 - ljacobs-skolik	"AUG 22 2023 17h"
 	
 	------------------------------------------------------------------
 	COMPATIBILITY REPORT:
@@ -24,30 +26,30 @@
 	------------------------------------------------------------------
 	Reserved:
 		
-		Event Markers: 0-##
-		States:        0-##
-		Result Codes:  0-##
-		Parameters:    0-##
+		Event Markers: 0-16
+		States:        0-8
+		Result Codes:  0-4
+		Parameters:    0-13
 	------------------------------------------------------------------
-	Task Architecture: Pavlovian-Operant
+	Task Architecture: 
 
-	Init Trial                (event marker = ????)
-		-  Decide if S2 will be played and if so, when
-	Trial Body
-		-  Decide what to do.... (event marker = ????)
-	End Trial                 (event marker = ???)    
-		-  Decide what to do....
+	Init Trial 
+ 		-  Random delay (e.g., 400-1500ms)
+		-  Decide if S will be played and if so, when, drawn from exp distribution
+	Decision-Formation Period
+		-  Present WN or WN+S, await response (lick)
+	Outcome Period                 
+		-  Signal correct/incorrect with tone, dispense juice
+  	ITI
+   		-  Await next trial
 
 	Behavioral Events:
 		-  Lick                 (event marker = 8)
 		-  Reward dispensed     (event marker = 9)
-		-  Quinine dispensed    (event marker = 10)
 		-  Waiting for ITI      (event marker = 11)   - enters this state if trial aborted by behavioral error, House lamps ON
 		-  Correct Lick         (event marker = 12)   - first correct lick in the window
-    -  1st Lick             (event marker = 16)   - first relevant lick in trial
+   		-  1st Lick             (event marker = 16)   - first relevant lick in trial
 
-	Trial Type Markers:
-		-  
 	--------------------------------------------------------------------
 	States:
 		0: _INIT                (private) 1st state in init loop, sets up communication to Matlab HOST
@@ -66,13 +68,28 @@
 
 	---------------------------------------------------------------------
 	Result Codes:
-		0: CODE_CORRECT         First lick within response window               
-		1: CODE_EARLY_LICK      Early lick -> Abort (Enforced No-Lick Only)
-		2: CODE_LATE_LICK       Late Lick  -> Abort (Operant Only)
-		3: CODE_NO_LICK         No Response -> Time Out
+		0: CODE_HIT		Correct ID of S
+  		1: CODE_MISS		Responded No when S present
+                2: CODE_CORRECT_REJECT	Correctly responded no S
+		3: CODE_FALSE_ALARM	Responded S when no S present
+                4: CODE_NO_RESPONSE	Did not respond on this trial
+
 	---------------------------------------------------------------------
 	Parameters:
-		
+		0: CALIBRATION			// 1 to enable calibration mode. Default 0.
+		1: PERCENT_S2,			// percent of trials where S2 should be present
+		2: S2_SPOUT,            	// 1 if the Left side is S2 spout, 2 if right side is S2 spout
+		3: NOISE_SPOUT,          	// 1 if the Left side is noise spout, 2 if right side is noise spout
+		4: REWARD_DURATION_MS,     	// Reward duration in ms
+		5: WHITE_NOISE_DURATION_MS,   	// Time of the white noise cue
+		6: S2_DURATION_MS,          	// Time of S2 being on
+		7: SNR_PERCENT,          	// Signal to noise ratio
+		8: SNR_STEP,          		// Signal to noise ratio step size
+		9: RESPONSE_WINDOW_MS,     	// How long animal has to decide
+		10: ITI_DURATION_MS,        	// How long is ITI state
+		11: PENALTY_DURATION_MS,     	// How long is the penalty state
+		12: TIME_NOISE_START,		// how long after entering NOISE_TRIAL or CUE_TRIAL white noise should start playing in ms
+		13: MOVING_AVG_WINDOW,       	// How many trials to use for moving average
 	---------------------------------------------------------------------
 		Incoming Message Syntax: (received from Matlab HOST)
 			"(character)#"        -- a command
@@ -106,16 +123,17 @@
 		- States are written as individual functions
 		- The main loop calls the appropriate state function depending on current state.
 		- A state function consists of two parts
-		 - Action: executed once when first entering this state.
-		 - Transitions: evaluated on each loop and determines what the next state should be.
+		- Action: executed once when first entering this state.
+		- Transitions: evaluated on each loop and determines what the next state should be.
 *********************************************************************/
 
 /*****************************************************
-                  Arduino Libraries
+                Arduino Libraries
+	See dependencies folder, e.g., White Noise
  *****************************************************/ 
 
 /*****************************************************
-	              Global Variables
+	        Global Variables
 *****************************************************/
 
 /*****************************************************
@@ -141,19 +159,19 @@ Enums - DEFINE States
 // All the states
 enum State
 {
-    _INIT,                // (Private) Initial state used on first loop.
-    IDLE_STATE,           // Idle state. Wait for go signal from host.
-    INIT_TRIAL,           // Determine time of S2 (if it occurs)
-    CUE_TRIAL,            // Play white noise and S2
-    NOISE_TRIAL,          // Play white noise only
-    RESPONSE_WINDOW,	  // Window over which animal can choose L or R
-    HIT,               	  // Reward state for correctly identifying S2
-    CORRECT_REJECT,       // Reward state for correctly saying No S2 present
+    _INIT,           	// (Private) Initial state used on first loop.
+    IDLE_STATE,     	// Idle state. Wait for go signal from host.
+    INIT_TRIAL,      	// Determine time of S2 (if it occurs)
+    CUE_TRIAL,       	// Play white noise and S2
+    NOISE_TRIAL,      	// Play white noise only
+    RESPONSE_WINDOW,	// Window over which animal can choose L or R
+    HIT,              	// Reward state for correctly identifying S2
+    CORRECT_REJECT,    	// Reward state for correctly saying No S2 present
     MISS,		// Unrewarded state for missing stimulus S2
     FALSE_ALARM,	// Unrewarded state for picking side of S2, but there was no S2
-    NO_RESPONSE,	// WHAT HAPPENS HERE?
-    INTERTRIAL,           // WHAT HAPPENS HERE?
-    _NUM_STATES           // (Private) Used to count number of states
+    NO_RESPONSE,	// 
+    INTERTRIAL,       	// Param updates sent
+    _NUM_STATES        	// (Private) Used to count number of states
 };
 
 // State names stored as strings, will be sent to host
@@ -203,23 +221,23 @@ enum EventMarkers
 		Times and trials will be defined by global time,
 		which can be parsed later to validate time measurements */
 {
-    EVENT_TRIAL_INIT,       // New trial initiated
-    EVENT_STIMULUS_WINDOW,       // New trial initiated
-    EVENT_RESPONSE_WINDOW,       // New trial initiated
-    EVENT_HIT,       			 // New trial initiated
-    EVENT_CORRECT_REJECT,        // New trial initiated
-    EVENT_MISS,       			 // New trial initiated
-    EVENT_FALSE_ALARM,       	 // New trial initiated
-    EVENT_NO_RESPONSE,       	 // New trial initiated
-    EVENT_NOISE_TRIAL,       	 // Noise trial started
-    EVENT_CUE_TRIAL,       		 // Cue trial started
-    EVENT_INTERTRIAL,             // New trial initiated
-    EVENT_WHITE_NOISE_ON,      	  // New trial initiated
-    EVENT_S2,       			  // New trial initiated
-    EVENT_LICK_LEFT,      		  // New trial initiated
-    EVENT_LICK_RIGHT,       	  // New trial initiated
-    EVENT_REWARD_LEFT,            // Reward dispensed
-    EVENT_REWARD_RIGHT,           // Reward dispensed
+    EVENT_TRIAL_INIT,       	// New trial initiated
+    EVENT_STIMULUS_WINDOW,      // Entered stimulus presentation window
+    EVENT_RESPONSE_WINDOW,      // Entered response window
+    EVENT_HIT,       		// Responded and was a Hit
+    EVENT_CORRECT_REJECT,       // Responded and was CR
+    EVENT_MISS,       		// Responded and was Miss
+    EVENT_FALSE_ALARM,       	// Responded and was FA
+    EVENT_NO_RESPONSE,       	// Trial ended without response
+    EVENT_NOISE_TRIAL,       	// WN-only trial started
+    EVENT_CUE_TRIAL,       	// WN+S trial started
+    EVENT_INTERTRIAL,           // Entered ITI
+    EVENT_WHITE_NOISE_ON,      	// WN turned on
+    EVENT_S2,       		// S turned on
+    EVENT_LICK_LEFT,      	// Detected left spout lick
+    EVENT_LICK_RIGHT,       	// Detected right spout lick
+    EVENT_REWARD_LEFT,          // Reward dispensed from left spout
+    EVENT_REWARD_RIGHT,         // Reward dispensed from right spout
     _NUM_OF_EVENT_MARKERS
 };
 
@@ -249,12 +267,12 @@ Result codes
 *****************************************************/
 enum ResultCode
 {
-    CODE_HIT,                           	   // Correctly responded there was an S2
-    CODE_MISS,                            	   // There was S2 but responded that there wasn't
-    CODE_CORRECT_REJECT,                       // Responded no S2 when there wasn't S2
-    CODE_FALSE_ALARM,                    	   // False positive (responded that there was a S2 when there wasn't)
-    CODE_NO_RESPONSE,                    	   // No response
-    _NUM_RESULT_CODES                          // (Private) Used to count how many codes there are.
+    CODE_HIT,				// Correctly responded there was an S2
+    CODE_MISS,				// S present but responded otherwise
+    CODE_CORRECT_REJECT,		// Responded no S when there wasn't S
+    CODE_FALSE_ALARM,                   // False positive (responded that there was a S when there wasn't)
+    CODE_NO_RESPONSE,                   // No response
+    _NUM_RESULT_CODES                   // (Private) Used to count how many codes there are.
 };
 
 // We'll send result code translations to MATLAB at startup
@@ -273,9 +291,9 @@ Audio cue frequencies
 *****************************************************/
 enum SoundEventFrequencyEnum
 {
-    TONE_REWARD  = 17000,            // What is this?
-    TONE_FAIL    = 10000,            // What is this?
-    TONE_S2      = 2000             // What is this?
+    TONE_REWARD  = 5000,     	// Reward tone frequency
+    TONE_FAIL    = 10000,  	// Error tone frequency
+    TONE_S2      = 17000  	// S frequency
 };
 
 /*****************************************************
@@ -284,22 +302,22 @@ Parameters that can be updated by HOST
 // Storing everything in array _params[]. Using enum ParamID as array indices so it's easier to add/remove parameters.
 enum ParamID
 {
-    _DEBUG,                         // (Private) 1 to enable debug messages from HOST. Default 0.
-    CALIBRATION,                    // 1 to enable calibration mode. Default 0.
-    PERCENT_S2,					    // percent of trials where S2 should be present
-    S2_SPOUT,                       // 1 if the Left side is S2 spout, 2 if right side is S2 spout
-    NOISE_SPOUT,                    // 1 if the Left side is noise spout, 2 if right side is noise spout
-    REWARD_DURATION_MS,             // Reward duration in ms
-    WHITE_NOISE_DURATION_MS,        // Time of the white noise cue
-    S2_DURATION_MS,                 // Time of S2 being on
-    SNR_PERCENT,                    // Signal to noise ratio
-    SNR_STEP,                       // Signal to noise ratio step size
-    RESPONSE_WINDOW_MS,             // How long animal has to decide
-    ITI_DURATION_MS,                // How long is ITI state
-    PENALTY_DURATION_MS,            // How long is the penalty state
-    TIME_NOISE_START,				// how long after entering NOISE_TRIAL or CUE_TRIAL white noise should start playing in ms
-    MOVING_AVG_WINDOW,              // How many trials to use for moving average
-    _NUM_PARAMS                     // (Private) Used to count how many parameters there are so we can initialize the param array with the correct size. Insert additional parameters before this.
+    _DEBUG,                 	// (Private) 1 to enable debug messages from HOST. Default 0.
+    CALIBRATION,           	// 1 to enable calibration mode. Default 0.
+    PERCENT_S2,			// percent of trials where S2 should be present
+    S2_SPOUT,            	// 1 if the Left side is S2 spout, 2 if right side is S2 spout
+    NOISE_SPOUT,          	// 1 if the Left side is noise spout, 2 if right side is noise spout
+    REWARD_DURATION_MS,     	// Reward duration in ms
+    WHITE_NOISE_DURATION_MS,   	// Time of the white noise cue
+    S2_DURATION_MS,          	// Time of S2 being on
+    SNR_PERCENT,          	// Signal to noise ratio
+    SNR_STEP,          		// Signal to noise ratio step size
+    RESPONSE_WINDOW_MS,     	// How long animal has to decide
+    ITI_DURATION_MS,        	// How long is ITI state
+    PENALTY_DURATION_MS,     	// How long is the penalty state
+    TIME_NOISE_START,		// how long after entering NOISE_TRIAL or CUE_TRIAL white noise should start playing in ms
+    MOVING_AVG_WINDOW,       	// How many trials to use for moving average
+    _NUM_PARAMS         	// (Private) Used to count how many parameters there are so we can initialize the param array with the correct size. Insert additional parameters before this.
 }; //**** BE SURE TO ADD NEW PARAMS TO THE NAMES LIST BELOW!*****//
 
 // Store parameter names as strings, will be sent to host
@@ -326,21 +344,21 @@ static const char *_paramNames[] =
 // Initialize parameters
 int _params[_NUM_PARAMS] =
         {
-                0,                              // _DEBUG
-                0,                              // CALIBRATION
-                50,								// PERCENT_S2
-                1,                              // S2_SPOUT
-                2,                              // NOISE_SPOUT
-                40,                             // REWARD_DURATION_MS
-                3000,							// WHITE_NOISE_DURATION_MS
-                250,                            // S2_DURATION_MS
-                50,                             // SNR_PERCENT
-                5,                              // SNR_STEP
-                3000,                           // RESPONSE_WINDOW_MS
-                5000,                           // ITI_DURATION_MS
-                5000,                           // PENALTY_DURATION_MS
-                50, 						    // TIME_NOISE_START
-                6                               // MOVING_AVG_WINDOW
+                0,       	// _DEBUG
+                0,         	// CALIBRATION
+                50,		// PERCENT_S2
+                1,      	// S2_SPOUT
+                2,           	// NOISE_SPOUT
+                40,          	// REWARD_DURATION_MS
+                3000,		// WHITE_NOISE_DURATION_MS
+                250,         	// S2_DURATION_MS
+                50,            	// SNR_PERCENT
+                5,           	// SNR_STEP
+                3000,        	// RESPONSE_WINDOW_MS
+                5000,       	// ITI_DURATION_MS
+                5000,        	// PENALTY_DURATION_MS
+                50, 		// TIME_NOISE_START
+                6      		// MOVING_AVG_WINDOW
         };
 
 /*****************************************************
@@ -348,18 +366,18 @@ Other Global Variables
 *****************************************************/
 // Variables declared here can be carried to the next loop, AND read/written in function scope as well as main scope
 // (previously defined):
-static State _state                  = _INIT;    // This variable (current _state) get passed into a _state function, which determines what the next _state should be, and updates it to the next _state.
-static State _prevState              = _INIT;    // Remembers the previous _state from the last loop (actions should only be executed when you enter a _state for the first time, comparing currentState vs _prevState helps us keep track of that).
-static char _command                 = ' ';      // Command char received from host, resets on each loop
-static int  _arguments[2]     		 = {0};      // Two integers received from host , resets on each loop ** changed from int to this so that we can collect negative inputs
-static long _resultCode              = -1;       // Result code number. -1 if there is no result.
+static State _state         	= _INIT;    // This variable (current _state) get passed into a _state function, which determines what the next _state should be, and updates it to the next _state.
+static State _prevState      	= _INIT;    // Remembers the previous _state from the last loop (actions should only be executed when you enter a _state for the first time, comparing currentState vs _prevState helps us keep track of that).
+static char _command          	= ' ';      // Command char received from host, resets on each loop
+static int  _arguments[2]     	= {0};      // Two integers received from host , resets on each loop ** changed from int to this so that we can collect negative inputs
+static long _resultCode        	= -1;       // Result code number. -1 if there is no result.
 
-static long _eventMarkerTimer        = 0;
-static long _trialTimer              = 0;
-static long _time_init_trial 		 = 50;	     // time in ms in the init_trial state
-static long _time_S2_start			 = 0;		 // time in ms when S2 should begin
-static long _random_delay_timer      = 0;        // Random delay timer
-static long _single_loop_timer       = 0;        // Timer
+static long _eventMarkerTimer  	= 0;
+static long _trialTimer     	= 0;
+static long _time_init_trial 	= 50;	// time in ms in the init_trial state
+static long _time_S2_start	= 0;	// time in ms when S2 should begin
+static long _random_delay_timer = 0;   	// Random delay timer
+static long _single_loop_timer  = 0;   	// Timer
 
 
 // state timers - track how long controller has been in each state
